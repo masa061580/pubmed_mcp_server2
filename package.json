@@ -1,5 +1,5 @@
 {
-  "name": "pubmed-mcp-server",
+  "name": "pubmed_mcp_server2",
   "version": "1.0.0",
   "description": "Model Context Protocol server for PubMed API integration",
   "main": "dist/index.js",

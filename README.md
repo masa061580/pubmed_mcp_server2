@@ -1,4 +1,4 @@
-# PubMed MCP Server
+# PubMed MCP Server v2
 
 A comprehensive Model Context Protocol (MCP) server that provides advanced access to the PubMed database for biomedical literature search, retrieval, and analysis. This server transforms natural language queries into optimized PubMed searches using MeSH terms and provides citation analysis capabilities.
 
@@ -30,8 +30,8 @@ A comprehensive Model Context Protocol (MCP) server that provides advanced acces
 
 1. Clone this repository:
 ```bash
-git clone <repository-url>
-cd pubmed-mcp-server
+git clone https://github.com/YOUR_USERNAME/pubmed_mcp_server2.git
+cd pubmed_mcp_server2
 ```
 
 2. Install dependencies:
@@ -64,7 +64,7 @@ Add to your Claude Desktop configuration file:
   "mcpServers": {
     "pubmed-server": {
       "command": "node",
-      "args": ["C:\\path\\to\\pubmed-mcp-server\\dist\\index.js"],
+      "args": ["C:\\path\\to\\pubmed_mcp_server2\\dist\\index.js"],
       "env": {}
     }
   }
@@ -187,7 +187,7 @@ npm run start      # Start the compiled server
 ### Project Structure
 
 ```
-pubmed-mcp-server/
+pubmed_mcp_server2/
 ├── src/
 │   ├── index.ts           # Main MCP server setup and tool registration
 │   └── pubmed-api.ts      # PubMed API integration and utilities
