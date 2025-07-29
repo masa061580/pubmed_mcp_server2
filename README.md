@@ -28,12 +28,12 @@ A comprehensive Model Context Protocol (MCP) server that provides advanced acces
 - Node.js v18.x or higher
 - npm or yarn package manager
 
-
 ## 🎯 Usage
 
 ### Method 1: NPM Package (Recommended)
 
 **Benefits**: Easy installation, automatic updates, no local build required.
+
 
 #### Claude Desktop Configuration
 Add to your Claude Desktop configuration file:
@@ -60,11 +60,22 @@ claude mcp add pubmed -s project -- cmd /c npx pubmed_mcp_server2
 ### Method 2: Local Development
 
 **Use case**: For development, customization, or when you want to modify the source code.
+## 🛠️ Installation
 
-#### Running the Server
-
+1. Clone this repository:
 ```bash
-npm start
+git clone https://github.com/YOUR_USERNAME/pubmed_mcp_server2.git
+cd pubmed_mcp_server2
+```
+
+2. Install dependencies:
+```bash
+npm install
+```
+
+3. Build the server:
+```bash
+npm run build
 ```
 
 #### Claude Desktop Integration (Local)
