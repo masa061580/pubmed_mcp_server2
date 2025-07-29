@@ -28,33 +28,46 @@ A comprehensive Model Context Protocol (MCP) server that provides advanced acces
 - Node.js v18.x or higher
 - npm or yarn package manager
 
-## 🛠️ Installation
-
-1. Clone this repository:
-```bash
-git clone https://github.com/YOUR_USERNAME/pubmed_mcp_server2.git
-cd pubmed_mcp_server2
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Build the server:
-```bash
-npm run build
-```
 
 ## 🎯 Usage
 
-### Running the Server
+### Method 1: NPM Package (Recommended)
+
+**Benefits**: Easy installation, automatic updates, no local build required.
+
+#### Claude Desktop Configuration
+Add to your Claude Desktop configuration file:
+
+**Windows**: `%APPDATA%\\Claude\\claude_desktop_config.json`
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "pubmed": {
+      "command": "npx",
+      "args": ["-y", "pubmed_mcp_server2"]
+    }
+  }
+}
+```
+
+#### Claude Code Configuration
+```bash
+claude mcp add pubmed -s project -- cmd /c npx pubmed_mcp_server2
+```
+
+### Method 2: Local Development
+
+**Use case**: For development, customization, or when you want to modify the source code.
+
+#### Running the Server
 
 ```bash
 npm start
 ```
 
-### Claude Desktop Integration
+#### Claude Desktop Integration (Local)
 
 Add to your Claude Desktop configuration file:
 
@@ -266,6 +279,35 @@ For issues, questions, or contributions:
 1. Check existing issues on GitHub
 2. Create a new issue with detailed description
 3. Include error messages and steps to reproduce
+
+## 📦 Installation Options
+
+### Quick Start (NPM)
+```bash
+npm install -g pubmed_mcp_server2
+```
+
+### Update to Latest Version
+```bash
+npm update -g pubmed_mcp_server2
+```
+
+## 📝 Version History
+
+### v1.0.2 (Latest)
+- 🆕 **Batch Processing**: Process multiple PMIDs with multiple operations efficiently
+- 🔧 **Flexible Input**: Support for array, space-separated, and comma-separated PMID input
+- 📊 **Enhanced Analytics**: Improved citation analysis and error reporting
+- ⚡ **Performance**: Optimized API rate limiting and concurrent processing
+
+### v1.0.1  
+- 🆕 **Similar Articles**: Find articles similar to a given PMID using NCBI's algorithm
+- 🎯 **Improved Relevance**: Similarity scores and ranking
+- 🔧 **Bug Fixes**: Enhanced error handling and API stability
+
+### v1.0.0
+- 🚀 **Initial Release**: Core PubMed search and analysis functionality
+- 📖 **Full Features**: Search, abstracts, citations, RIS export, query optimization
 
 ## 🔗 Related Resources
 
