@@ -1,4 +1,4 @@
-# PubMed MCP Server v2
+# PubMed MCP Server v2 (Version 1.0.2)
 
 A comprehensive Model Context Protocol (MCP) server that provides advanced access to the PubMed database for biomedical literature search, retrieval, and analysis. This server transforms natural language queries into optimized PubMed searches using MeSH terms and provides citation analysis capabilities.
 
@@ -12,6 +12,8 @@ A comprehensive Model Context Protocol (MCP) server that provides advanced acces
 - **`export_ris`**: Export citations in RIS format for reference management software (Zotero, Mendeley, EndNote)
 - **`get_citation_counts`**: Analyze citation metrics and find citing articles using NCBI elink API
 - **`optimize_search_query`** ✨: Transform natural language queries into optimized PubMed searches with MeSH terms and field tags
+- **`find_similar_articles`**: Find articles similar to a given PMID using NCBI's similarity algorithm with relevance scores
+- **`batch_process`** 🆕: Process multiple PMIDs with multiple operations efficiently for bulk analysis
 
 ### 📚 Resources
 
@@ -99,6 +101,20 @@ export_ris: "36038128, 30105375"
 → Returns: RIS formatted citations ready for import into reference managers
 ```
 
+#### 5. Find Similar Articles
+```
+find_similar_articles: "36038128"
+→ Returns: Up to 10 similar articles ranked by NCBI's similarity algorithm
+→ Each result includes similarity score, title, authors, abstract preview
+```
+
+#### 6. Batch Processing (NEW in v1.0.2)
+```
+batch_process: {pmids: ["36038128", "35105375"], operations: ["abstract", "citations"]}
+→ Returns: Comprehensive analysis of multiple articles in one request
+→ Supports: abstract, citations, similar, ris_export, full_text operations
+```
+
 ## 🧠 MeSH Term Optimization
 
 The server includes an extensive database of medical term mappings covering:
@@ -143,7 +159,9 @@ The server includes an extensive database of medical term mappings covering:
 - **Citation analysis**: Maximum 20 PMIDs per request
 - **RIS export**: Maximum 50 PMIDs per batch
 - **Full text**: Maximum 10 PMC articles per request
-- **API delays**: 200-400ms between requests to respect NCBI guidelines
+- **Similar articles**: Maximum 50 similar articles per PMID (default: 10)
+- **Batch processing**: Maximum 50 PMIDs per batch with up to 5 concurrent operations
+- **API delays**: 200-600ms between requests to respect NCBI guidelines
 
 ## ⚙️ Configuration
 

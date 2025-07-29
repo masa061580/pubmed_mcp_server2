@@ -760,6 +760,7 @@ export async function searchAndFetchArticles(
 export async function getCitationCounts(pmids: string[]): Promise<CitationCountResult[]> {
   if (pmids.length === 0) return [];
   
+  console.error(`getCitationCounts called with ${pmids.length} PMIDs: ${pmids.join(', ')}`);
   const results: CitationCountResult[] = [];
   
   // Process each PMID individually to get accurate citation data
@@ -1073,4 +1074,348 @@ export async function optimizeSearchQuery(originalQuery: string): Promise<QueryO
     fieldTagsUsed: [...new Set(fieldTagsUsed)], // Remove duplicates
     estimatedResults
   };
+}
+
+// Interface for similar article results
+export interface SimilarArticleResult {
+  pmid: string;
+  title: string;
+  authors: string[];
+  journal: string;
+  publicationDate: string;
+  abstract?: string;
+  similarityScore?: number;
+  doi?: string;
+  pmcId?: string;
+}
+
+// Interface for batch processing
+export interface BatchOperation {
+  pmid: string;
+  operation: 'abstract' | 'citations' | 'similar' | 'ris_export' | 'full_text';
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  result?: any;
+  error?: string;
+}
+
+export interface BatchProcessingResult {
+  taskId: string;
+  operations: BatchOperation[];
+  summary: {
+    total: number;
+    completed: number;
+    failed: number;
+    processing: number;
+  };
+  results: {
+    abstracts?: FullAbstractResult[];
+    citations?: CitationCountResult[];
+    similar?: { [pmid: string]: SimilarArticleResult[] };
+    risExports?: string;
+    fullTexts?: FullTextResult[];
+  };
+}
+
+// Find similar articles using PubMed's ELink API
+export async function findSimilarArticles(
+  pmid: string,
+  maxResults: number = 10
+): Promise<SimilarArticleResult[]> {
+  try {
+    // Step 1: Use ELink to get similar articles from PubMed
+    const elinkParams = {
+      dbfrom: 'pubmed',
+      db: 'pubmed',
+      id: pmid,
+      linkname: 'pubmed_pubmed',  // Use the full similar articles linkname
+      cmd: 'neighbor',
+      retmode: 'xml',
+      retmax: maxResults + 10,  // Request extra to account for filtering
+      tool: 'mcp-pubmed-server',
+      email: 'user@example.com'
+    };
+    
+    const elinkUrl = buildUrl(ELINK_URL, elinkParams);
+    const elinkResponse = await fetch(elinkUrl);
+    
+    if (!elinkResponse.ok) {
+      throw new Error(`HTTP error! status: ${elinkResponse.status}`);
+    }
+    
+    const elinkXml = await elinkResponse.text();
+    const elinkParsed = await parseXML(elinkXml);
+    
+    // Debug: Log the raw response structure
+    console.error('ELink Response:', JSON.stringify(elinkParsed, null, 2).substring(0, 500));
+    
+    // Extract similar PMIDs with scores
+    // Check if we have any LinkSet
+    if (!elinkParsed.eLinkResult || !elinkParsed.eLinkResult.LinkSet) {
+      console.error('No LinkSet in response');
+      return [];
+    }
+    
+    const linkSets = Array.isArray(elinkParsed.eLinkResult.LinkSet) 
+      ? elinkParsed.eLinkResult.LinkSet 
+      : [elinkParsed.eLinkResult.LinkSet];
+    
+    const linkSet = linkSets[0];
+    if (!linkSet) {
+      console.error('Empty LinkSet');
+      return [];
+    }
+    
+    // Check if we have LinkSetDb (contains the similar articles)
+    if (!linkSet.LinkSetDb) {
+      console.error('No LinkSetDb found - article may not have similar articles');
+      return [];
+    }
+    
+    const linkSetDbs = Array.isArray(linkSet.LinkSetDb) ? linkSet.LinkSetDb : [linkSet.LinkSetDb];
+    
+    // Find the linkSetDb with our linkname
+    let targetLinkSetDb = null;
+    for (const lsdb of linkSetDbs) {
+      if (lsdb.LinkName === 'pubmed_pubmed' || lsdb.LinkName === 'pubmed_pubmed_five') {
+        targetLinkSetDb = lsdb;
+        break;
+      }
+    }
+    
+    if (!targetLinkSetDb || !targetLinkSetDb.Link) {
+      console.error('No similar articles links found');
+      return [];
+    }
+    
+    const similarLinks = Array.isArray(targetLinkSetDb.Link) ? targetLinkSetDb.Link : [targetLinkSetDb.Link];
+    
+    console.error(`Found ${similarLinks.length} similar articles for PMID ${pmid}`);
+    
+    // Get PMIDs and scores
+    const similarPmids: Array<{pmid: string, score?: string}> = similarLinks
+      .slice(0, maxResults + 1) // Get one extra in case we need to filter out the original
+      .map((link: any) => {
+        // Handle both direct ID and nested structure
+        const linkId = link.Id || link;
+        return {
+          pmid: linkId.toString(),
+          score: link.Score ? link.Score.toString() : undefined
+        };
+      })
+      .filter((item: any) => item.pmid && item.pmid !== pmid) // Exclude the original article
+      .slice(0, maxResults); // Ensure we don't exceed maxResults
+    
+    if (similarPmids.length === 0) {
+      return [];
+    }
+    
+    // Step 2: Get detailed information for similar articles
+    const pmidList = similarPmids.map(item => item.pmid);
+    const articles = await getArticleDetails(pmidList);
+    
+    // Step 3: Combine article details with similarity scores
+    const results: SimilarArticleResult[] = articles.map((article, index) => {
+      const similarItem = similarPmids.find(item => item.pmid === article.pmid);
+      return {
+        pmid: article.pmid,
+        title: article.title,
+        authors: article.authors,
+        journal: article.journal,
+        publicationDate: article.publicationDate,
+        abstract: article.abstract,
+        similarityScore: similarItem?.score ? parseFloat(similarItem.score) : undefined,
+        doi: article.doi,
+        pmcId: article.pmcId
+      };
+    });
+    
+    // Sort by similarity score (higher is better)
+    results.sort((a, b) => {
+      if (a.similarityScore && b.similarityScore) {
+        return b.similarityScore - a.similarityScore;
+      }
+      return 0;
+    });
+    
+    return results;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to find similar articles: ${errorMessage}`);
+  }
+}
+
+// Utility function to delay execution
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Batch processing function
+export async function batchProcess(
+  pmids: string[],
+  operations: string[],
+  maxConcurrency: number = 3
+): Promise<BatchProcessingResult> {
+  const taskId = `batch_${Date.now()}`;
+  const batchOperations: BatchOperation[] = [];
+  
+  // Initialize operations for each PMID
+  for (const pmid of pmids) {
+    for (const operation of operations) {
+      batchOperations.push({
+        pmid,
+        operation: operation as any,
+        status: 'pending'
+      });
+    }
+  }
+  
+  const results: BatchProcessingResult['results'] = {};
+  
+  // Group operations by type for efficiency
+  const operationGroups: { [key: string]: string[] } = {};
+  for (const pmid of pmids) {
+    for (const operation of operations) {
+      if (!operationGroups[operation]) {
+        operationGroups[operation] = [];
+      }
+      operationGroups[operation].push(pmid);
+    }
+  }
+  
+  try {
+    // Process each operation type
+    for (const [operation, pmidList] of Object.entries(operationGroups)) {
+      console.error(`Processing ${operation} for ${pmidList.length} PMIDs...`);
+      
+      // Update status to processing
+      batchOperations
+        .filter(op => op.operation === operation)
+        .forEach(op => op.status = 'processing');
+      
+      try {
+        switch (operation) {
+          case 'abstract':
+            // Process in chunks to respect rate limits
+            results.abstracts = [];
+            for (let i = 0; i < pmidList.length; i += 20) {
+              const chunk = pmidList.slice(i, i + 20);
+              const abstracts = await getFullAbstract(chunk);
+              results.abstracts.push(...abstracts);
+              if (i + 20 < pmidList.length) {
+                await delay(300); // Rate limiting
+              }
+            }
+            break;
+            
+          case 'citations':
+            results.citations = [];
+            console.error(`Processing citations for ${pmidList.length} PMIDs...`);
+            for (let i = 0; i < pmidList.length; i += 10) {
+              const chunk = pmidList.slice(i, i + 10);
+              console.error(`Processing citation chunk ${i/10 + 1}: PMIDs ${chunk.join(', ')}`);
+              const citations = await getCitationCounts(chunk);
+              console.error(`Got ${citations.length} citation results for chunk`);
+              results.citations.push(...citations);
+              if (i + 10 < pmidList.length) {
+                await delay(400); // Rate limiting
+              }
+            }
+            console.error(`Total citation results: ${results.citations.length}`);
+            break;
+            
+          case 'similar':
+            results.similar = {};
+            for (const pmid of pmidList) {
+              try {
+                const similar = await findSimilarArticles(pmid, 5); // Limit to 5 for batch
+                results.similar[pmid] = similar;
+                await delay(300); // Rate limiting
+              } catch (error) {
+                console.error(`Error finding similar articles for ${pmid}:`, error);
+                results.similar[pmid] = [];
+              }
+            }
+            break;
+            
+          case 'ris_export':
+            // Process in chunks for RIS export
+            const risChunks: string[] = [];
+            for (let i = 0; i < pmidList.length; i += 50) {
+              const chunk = pmidList.slice(i, i + 50);
+              try {
+                const risResult = await exportRIS(chunk);
+                if (risResult.risData) {
+                  risChunks.push(risResult.risData);
+                }
+                if (i + 50 < pmidList.length) {
+                  await delay(500); // Rate limiting
+                }
+              } catch (error) {
+                console.error(`Error exporting RIS for chunk:`, error);
+              }
+            }
+            results.risExports = risChunks.join('\n\n');
+            break;
+            
+          case 'full_text':
+            results.fullTexts = [];
+            // Filter PMIDs that have PMC IDs first
+            const articlesWithPMC = await getArticleDetails(pmidList);
+            const pmcIds = articlesWithPMC
+              .filter(article => article.pmcId)
+              .map(article => article.pmcId!);
+            
+            if (pmcIds.length > 0) {
+              for (let i = 0; i < pmcIds.length; i += 10) {
+                const chunk = pmcIds.slice(i, i + 10);
+                try {
+                  const fullTexts = await getFullText(chunk);
+                  results.fullTexts.push(...fullTexts);
+                  if (i + 10 < pmcIds.length) {
+                    await delay(600); // Rate limiting
+                  }
+                } catch (error) {
+                  console.error(`Error getting full text for chunk:`, error);
+                }
+              }
+            }
+            break;
+        }
+        
+        // Mark operations as completed
+        batchOperations
+          .filter(op => op.operation === operation)
+          .forEach(op => op.status = 'completed');
+          
+      } catch (error) {
+        console.error(`Error processing ${operation}:`, error);
+        // Mark operations as failed
+        batchOperations
+          .filter(op => op.operation === operation)
+          .forEach(op => {
+            op.status = 'error';
+            op.error = error instanceof Error ? error.message : String(error);
+          });
+      }
+    }
+    
+    // Calculate summary
+    const summary = {
+      total: batchOperations.length,
+      completed: batchOperations.filter(op => op.status === 'completed').length,
+      failed: batchOperations.filter(op => op.status === 'error').length,
+      processing: batchOperations.filter(op => op.status === 'processing').length
+    };
+    
+    return {
+      taskId,
+      operations: batchOperations,
+      summary,
+      results
+    };
+    
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Batch processing failed: ${errorMessage}`);
+  }
 }

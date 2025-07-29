@@ -3,12 +3,12 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { searchAndFetchArticles, getFullAbstract, getFullText, searchPubMed, getArticleDetails, exportRIS, getCitationCounts, optimizeSearchQuery } from "./pubmed-api.js";
+import { searchAndFetchArticles, getFullAbstract, getFullText, searchPubMed, getArticleDetails, exportRIS, getCitationCounts, optimizeSearchQuery, findSimilarArticles, batchProcess } from "./pubmed-api.js";
 
 // Create MCP server
 const server = new McpServer({
   name: "pubmed-mcp-server",
-  version: "1.0.0"
+  version: "1.0.2"
 });
 
 // Tool: Search PubMed articles
@@ -592,6 +592,289 @@ server.registerTool(
   }
 );
 
+// Tool: Find similar articles
+server.registerTool(
+  "find_similar_articles",
+  {
+    title: "Find Similar Articles",
+    description: "Find articles similar to a given PubMed article using NCBI's similarity algorithm. Returns articles ranked by relevance with similarity scores.",
+    inputSchema: {
+      pmid: z.string().describe("PubMed ID (PMID) of the reference article"),
+      maxResults: z.number().optional().default(10).describe("Maximum number of similar articles to return (default: 10, max: 50)")
+    }
+  },
+  async ({ pmid, maxResults = 10 }) => {
+    try {
+      if (!pmid || pmid.trim().length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "No PMID provided for similarity search"
+          }],
+          isError: true
+        };
+      }
+      
+      // Limit maxResults to prevent abuse
+      const limitedMax = Math.min(maxResults, 50);
+      
+      // Get similar articles
+      const similarArticles = await findSimilarArticles(pmid.trim(), limitedMax);
+      
+      if (similarArticles.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: `No similar articles found for PMID: ${pmid}\n\nNote: This could be due to:\n1. Invalid PMID\n2. Very recent article not yet indexed\n3. Article type not suitable for similarity matching`
+          }]
+        };
+      }
+      
+      // First, get the original article details for reference
+      const originalArticle = await getArticleDetails([pmid]);
+      
+      // Format the response
+      let responseText = `🔍 **Similar Articles Analysis**\n\n`;
+      
+      if (originalArticle.length > 0) {
+        responseText += `**Reference Article:**\n`;
+        responseText += `Title: ${originalArticle[0].title}\n`;
+        responseText += `Authors: ${originalArticle[0].authors.slice(0, 3).join(", ")}${originalArticle[0].authors.length > 3 ? ", et al." : ""}\n`;
+        responseText += `PMID: ${pmid}\n`;
+        responseText += `\n${"=".repeat(80)}\n\n`;
+      }
+      
+      responseText += `**Found ${similarArticles.length} similar articles:**\n\n`;
+      
+      // Format each similar article
+      const formattedResults = similarArticles.map((article, index) => {
+        const authorsText = article.authors.length > 0 
+          ? article.authors.slice(0, 3).join(", ") + (article.authors.length > 3 ? ", et al." : "")
+          : "Unknown authors";
+        
+        let result = `**${index + 1}. ${article.title}**\n`;
+        
+        if (article.similarityScore !== undefined && article.similarityScore !== null) {
+          result += `📊 Similarity Score: ${article.similarityScore.toFixed(2)}\n`;
+        }
+        
+        result += `Authors: ${authorsText}\n`;
+        result += `Journal: ${article.journal}\n`;
+        result += `Publication Date: ${article.publicationDate}\n`;
+        result += `PMID: ${article.pmid}\n`;
+        
+        if (article.doi) {
+          result += `DOI: ${article.doi}\n`;
+        }
+        
+        if (article.pmcId) {
+          result += `PMC ID: ${article.pmcId}\n`;
+        }
+        
+        result += `URL: https://pubmed.ncbi.nlm.nih.gov/${article.pmid}/\n`;
+        
+        if (article.abstract) {
+          const truncatedAbstract = article.abstract.length > 300 
+            ? article.abstract.substring(0, 300) + "... (Use get_full_abstract for complete abstract)"
+            : article.abstract;
+          result += `\nAbstract: ${truncatedAbstract}\n`;
+        }
+        
+        return result;
+      }).join("\n" + "=".repeat(80) + "\n\n");
+      
+      responseText += formattedResults;
+      
+      // Extract PMIDs for easy reference
+      const pmids = similarArticles.map(a => a.pmid);
+      
+      responseText += `\n${"=".repeat(80)}\n`;
+      responseText += `**Quick Reference:**\n`;
+      responseText += `PMIDs of similar articles: ${pmids.join(", ")}\n`;
+      responseText += `\n💡 **Tips:**\n`;
+      responseText += `• Use get_full_abstract with PMIDs for complete abstracts\n`;
+      responseText += `• Use search_pubmed to explore specific topics from these articles\n`;
+      responseText += `• Higher similarity scores indicate stronger relevance\n`;
+      
+      return {
+        content: [{
+          type: "text",
+          text: responseText
+        }]
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{
+          type: "text",
+          text: `Error finding similar articles: ${errorMessage}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
+// Tool: Batch Processing
+server.registerTool(
+  "batch_process",
+  {
+    title: "Batch Process",
+    description: "Process multiple PMIDs with multiple operations efficiently. Supports abstracts, citations, similar articles, RIS export, and full text.",
+    inputSchema: {
+      pmids: z.union([
+        z.array(z.string()),
+        z.string()
+      ]).describe("Array of PubMed IDs (PMIDs) to process, or space/comma-separated string (e.g., ['123', '456'] or '123 456 789' or '123,456,789')"),
+      operations: z.array(z.enum(["abstract", "citations", "similar", "ris_export", "full_text"])).describe("Operations to perform on each PMID"),
+      maxConcurrency: z.number().optional().default(3).describe("Maximum concurrent operations (default: 3)")
+    }
+  },
+  async ({ pmids, operations, maxConcurrency = 3 }) => {
+    try {
+      // Parse PMIDs from different input formats
+      let pmidArray: string[] = [];
+      
+      if (typeof pmids === 'string') {
+        // Handle space or comma-separated string
+        pmidArray = pmids
+          .split(/[\s,]+/)  // Split by spaces or commas
+          .map(pmid => pmid.trim())
+          .filter(pmid => pmid.length > 0);
+      } else if (Array.isArray(pmids)) {
+        pmidArray = pmids.filter(pmid => pmid && pmid.trim().length > 0);
+      }
+      
+      if (pmidArray.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "No valid PMIDs provided for batch processing"
+          }],
+          isError: true
+        };
+      }
+      
+      if (!operations || operations.length === 0) {
+        return {
+          content: [{
+            type: "text",
+            text: "No operations specified for batch processing"
+          }],
+          isError: true
+        };
+      }
+      
+      // Limit to prevent abuse
+      const limitedPmids = pmidArray.slice(0, 50);  // Max 50 PMIDs
+      const limitedConcurrency = Math.min(maxConcurrency, 5);  // Max 5 concurrent
+      
+      if (pmidArray.length > 50) {
+        console.warn(`Requested ${pmidArray.length} PMIDs, limiting to 50 for batch processing`);
+      }
+      
+      // Start batch processing
+      const result = await batchProcess(limitedPmids, operations, limitedConcurrency);
+      
+      // Format the response
+      let responseText = `📦 **Batch Processing Results**\n\n`;
+      responseText += `**Task ID**: ${result.taskId}\n`;
+      responseText += `**PMIDs processed**: ${limitedPmids.length}\n`;
+      responseText += `**Operations**: ${operations.join(", ")}\n\n`;
+      
+      // Summary
+      responseText += `📊 **Summary**:\n`;
+      responseText += `• Total operations: ${result.summary.total}\n`;
+      responseText += `• Completed: ${result.summary.completed}\n`;
+      responseText += `• Failed: ${result.summary.failed}\n`;
+      responseText += `• Success rate: ${((result.summary.completed / result.summary.total) * 100).toFixed(1)}%\n\n`;
+      
+      responseText += `${"=".repeat(80)}\n\n`;
+      
+      // Results by operation type
+      if (result.results.abstracts && result.results.abstracts.length > 0) {
+        responseText += `📄 **Abstracts Retrieved**: ${result.results.abstracts.length}\n`;
+        result.results.abstracts.slice(0, 3).forEach((abstract, index) => {
+          responseText += `${index + 1}. ${abstract.title} (PMID: ${abstract.pmid})\n`;
+        });
+        if (result.results.abstracts.length > 3) {
+          responseText += `... and ${result.results.abstracts.length - 3} more abstracts\n`;
+        }
+        responseText += `\n`;
+      }
+      
+      if (result.results.citations && result.results.citations.length > 0) {
+        responseText += `📊 **Citation Analysis**: ${result.results.citations.length} articles\n`;
+        const totalCitations = result.results.citations.reduce((sum, c) => sum + c.citationCount, 0);
+        responseText += `Total citations found: ${totalCitations}\n`;
+        const topCited = result.results.citations
+          .sort((a, b) => b.citationCount - a.citationCount)
+          .slice(0, 3);
+        topCited.forEach((citation, index) => {
+          responseText += `${index + 1}. ${citation.title}: ${citation.citationCount} citations\n`;
+        });
+        responseText += `\n`;
+      }
+      
+      if (result.results.similar && Object.keys(result.results.similar).length > 0) {
+        responseText += `🔍 **Similar Articles**: Found for ${Object.keys(result.results.similar).length} PMIDs\n`;
+        Object.entries(result.results.similar).slice(0, 2).forEach(([pmid, similars]) => {
+          responseText += `PMID ${pmid}: ${similars.length} similar articles\n`;
+        });
+        responseText += `\n`;
+      }
+      
+      if (result.results.risExports) {
+        responseText += `📋 **RIS Export**: Generated for all processed PMIDs\n`;
+        responseText += `RIS data length: ${result.results.risExports.length} characters\n\n`;
+      }
+      
+      if (result.results.fullTexts && result.results.fullTexts.length > 0) {
+        responseText += `📖 **Full Texts Retrieved**: ${result.results.fullTexts.length}\n`;
+        result.results.fullTexts.forEach((fullText, index) => {
+          responseText += `${index + 1}. ${fullText.title} (PMC: ${fullText.pmcId})\n`;
+        });
+        responseText += `\n`;
+      }
+      
+      // Error details if any
+      if (result.summary.failed > 0) {
+        responseText += `⚠️ **Failed Operations**:\n`;
+        const failedOps = result.operations.filter(op => op.status === 'error');
+        failedOps.slice(0, 5).forEach((op, index) => {
+          responseText += `${index + 1}. PMID ${op.pmid} (${op.operation}): ${op.error}\n`;
+        });
+        if (failedOps.length > 5) {
+          responseText += `... and ${failedOps.length - 5} more errors\n`;
+        }
+        responseText += `\n`;
+      }
+      
+      responseText += `${"=".repeat(80)}\n`;
+      responseText += `**💡 Tips:**\n`;
+      responseText += `• Use individual tools for detailed analysis of specific results\n`;
+      responseText += `• Check failed operations and retry with valid PMIDs\n`;
+      responseText += `• For large datasets, consider processing in smaller batches\n`;
+      
+      return {
+        content: [{
+          type: "text",
+          text: responseText
+        }]
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{
+          type: "text",
+          text: `Error in batch processing: ${errorMessage}`
+        }],
+        isError: true
+      };
+    }
+  }
+);
+
 // Resource: PubMed search results
 server.registerResource(
   "search-results",
@@ -663,7 +946,7 @@ async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
     
-    console.error("PubMed MCP Server is running...");
+    console.error("PubMed MCP Server v1.0.2 is running...");
     console.error("Available tools:");
     console.error("- search_pubmed: Search PubMed and get article summaries");
     console.error("- get_full_abstract: Get complete abstracts by PMID");
@@ -671,6 +954,8 @@ async function main() {
     console.error("- export_ris: Export citations in RIS format for reference managers");
     console.error("- get_citation_counts: Get citation counts for specific PMIDs");
     console.error("- optimize_search_query: Transform natural language to optimized PubMed queries");
+    console.error("- find_similar_articles: Find similar articles using NCBI's similarity algorithm");
+    console.error("- batch_process: Process multiple PMIDs with multiple operations efficiently (NEW)");
   } catch (error) {
     console.error("Failed to start server:", error);
     process.exit(1);

@@ -1,15 +1,33 @@
 {
   "name": "pubmed_mcp_server2",
-  "version": "1.0.0",
-  "description": "Model Context Protocol server for PubMed API integration",
+  "version": "1.0.2",
+  "description": "Advanced Model Context Protocol server for PubMed database access with MeSH optimization and citation analysis",
   "main": "dist/index.js",
   "type": "module",
+  "bin": {
+    "pubmed-mcp-server": "./dist/index.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_USERNAME/pubmed_mcp_server2.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/pubmed_mcp_server2/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/pubmed_mcp_server2#readme",
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc && node dist/index.js",
     "clean": "rmdir /s /q dist 2>nul || echo \"dist directory cleaned\"",
-    "prebuild": "npm run clean"
+    "prebuild": "npm run clean",
+    "prepublishOnly": "npm run build",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "mcp",
@@ -17,7 +35,15 @@
     "pubmed",
     "ncbi",
     "biomedical",
-    "research"
+    "research",
+    "mesh",
+    "citation-analysis",
+    "literature-search",
+    "claude",
+    "ai-tools",
+    "medical-research",
+    "bibliography",
+    "ris-export"
   ],
   "author": "Claude",
   "license": "MIT",
